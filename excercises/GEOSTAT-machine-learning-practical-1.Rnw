@@ -1,0 +1,3 @@
+full knitr scripts comming
+
+also the code stripped in a file as code.R
