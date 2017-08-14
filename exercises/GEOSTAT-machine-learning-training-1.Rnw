@@ -1,0 +1,425 @@
+% !TeX spellcheck = en_US
+%#------------------------------------------------------------------------------
+%# Name:        GEOSTAT-machine-learning-training.Rnw
+%#
+%# Inhalt:      Exercises for GEOSTAT, 2. Series
+%#
+%# Autorin:     Madlene Nussbaum, HAFL
+%# Datum:       August 2017
+%# Licence:     GNU General Public License
+%#------------------------------------------------------------------------------
+
+\documentclass[11pt,a4paper,twoside]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage{blindtext} % dummypackage
+\usepackage{hyperref} % links in table of contents
+\usepackage[english]{babel}
+\usepackage{amsthm} % for renvironment
+\usepackage{natbib}
+\usepackage[iso,german]{isodate}
+
+\newtheorem{rexample}{R Example}[section]
+
+% Some colors for the links
+\definecolor{darkblue}{rgb}{0,0,0.5}
+\definecolor{darkmagenta}{rgb}{0.5,0,0.5}
+\definecolor{darkgreen}{rgb}{0,0.4,0}
+\definecolor{darkred}{rgb}{0.7,0,0}
+
+\hypersetup{
+draft=false,
+colorlinks=true,linkcolor=darkblue,citecolor=darkred,urlcolor=darkgreen,
+breaklinks=true, bookmarksnumbered=true
+}
+
+% % Kopfzeilen
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[OL]{\leftmark}% ungerade Seiten, links
+\fancyhead[OR]{\thepage}% ungerade Seiten, rechts
+\fancyhead[EL]{\thepage}% gerade Seiten, links
+\fancyhead[ER]{\leftmark}% gerade Seiten, rechts
+\renewcommand{\headrulewidth}{0.4pt}
+\fancyheadoffset[R]{1pt}
+
+% captions in bold
+\usepackage[font = {small}, labelfont = bf]{caption}
+
+% Seite besser ausnuetzen
+\usepackage[a4paper]{geometry}
+\geometry{verbose,tmargin=2.5cm,bmargin=2.3cm,lmargin=2.5cm,rmargin=3cm,headheight=1.7cm,headsep=0.9cm,footskip=1.5cm}
+
+% no indents
+\setlength\parindent{0pt}
+\setlength{\parskip}{3pt}
+
+
+\begin{document}
+
+%% Title ugly latex style
+% \title{Iris evaluations for testing}
+% \author{Miraculix Drudifix}
+% \maketitle
+
+
+% Title (ugly coding)
+\vspace{7cm}
+{\LARGE \textbf{GEOSTAT }}
+
+{\Large \textbf{Mastering Machine Learning for Spatial Prediction 1} }
+
+\vspace{0.3cm}
+
+{\Large \textbf{Exercises} }
+
+
+\vspace{0.5cm}
+Madlene Nussbaum 
+
+13 August 2017
+\bigskip
+
+
+% Table of contents (with empty back page()
+\setlength{\parskip}{0pt}
+\tableofcontents
+\thispagestyle{empty}
+\setlength{\parskip}{4pt}
+
+% \newpage
+% \mbox{}
+% \thispagestyle{empty}
+% \newpage
+
+% --------
+
+
+<<general-options,echo=FALSE>>=
+
+library(knitr)
+# output code, but no warnings
+opts_chunk$set(echo = TRUE,eval=TRUE,warning=FALSE)
+# auto check dependencies (of cached chunks, its an approximation only)
+opts_chunk$set(autodep = TRUE)
+# dep_auto() # print dependencies 
+
+setwd("/home/madlene/teaching/2017_GEOSTAT_machine-learning/exercises/")
+
+@
+
+
+
+\section*{Preparation}
+
+Load needed packages:
+
+<<load-packages,message=FALSE>>=
+library(grpreg)
+library(glmnet)
+library(randomForest)
+library(mboost)
+library(geoGAM)
+library(raster)
+@
+
+As an example you can work with the Berne soil mapping study area: dataset \texttt{berne} in R package \texttt{geoGAM}, contains continuous, binary and a multinomial/ordered response and a spatial data \texttt{berne.grid} for prediction. 
+
+Feel free to work with your own data!
+
+Load the data, select the calibration set and remove missing values in covariates: 
+
+<<read-in-data>>=
+dim(berne)
+# Continuous response 
+d.ph10 <- berne[berne$dataset == "calibration" & !is.na(berne$ph.0.10), ]
+d.ph10 <- d.ph10[complete.cases(d.ph10[13:ncol(d.ph10)]), ]
+# Binary response 
+d.wlog100 <- berne[berne$dataset=="calibration"&!is.na(berne$waterlog.100), ]
+d.wlog100 <- d.wlog100[complete.cases(d.wlog100[13:ncol(d.wlog100)]), ]
+# Ordered/multinomial tesponse 
+d.drain <- berne[berne$dataset == "calibration" & !is.na(berne$dclass), ]
+d.drain <- d.drain[complete.cases(d.drain[13:ncol(d.drain)]), ]
+# covariates start at col 13
+l.covar <- names(d.ph10[, 13:ncol(d.ph10)])
+@
+
+
+
+\section{Lasso -- linear shrinkage method}
+
+The \texttt{berne} dataset contains categorical covariates (factors). The group lasso (R package \texttt{grpreg} ensures that all dummy covariates of one factor are excluded (coefficients set to 0) togheter or remain in the model together.)
+
+The main tuning parameter $\lambda$ is selected by cross validation. 
+
+
+<<lasso-continuous-response,cache=TRUE>>=
+
+# define groups: dummy coding of a factor is treated as group
+# find factors
+l.factors <- names(d.ph10[l.covar])[ 
+  t.f <- unlist( lapply(d.ph10[l.covar], is.factor) ) ]
+l.numeric <-  names(t.f[ !t.f ])
+
+g.groups <- c( 1:length(l.numeric), 
+               unlist( 
+                 sapply(1:length(l.factors), function(n){
+                   rep(n+length(l.numeric), nlevels(d.ph10[, l.factors[n]])-1)
+                 }) 
+               ) 
+)
+# grpreg needs model matrix as input
+XX <- model.matrix( ~., d.ph10[, c(l.factors, l.numeric), F])[,-1]
+
+# cross validation (CV) to find lambda
+ph.cvfit <- cv.grpreg(X = XX, y = d.ph10$ph.0.10, 
+                      group = g.groups, 
+                      penalty = "grLasso",
+                      returnY = T) # access CV results
+
+@
+
+
+Compute predictions for the validation set with optimal number of groups chosen by lasso:
+
+<<lasso-predictions>>=
+
+# choose optimal lambda: CV minimum error + 1 SE (see glmnet)
+l.se <- ph.cvfit$cvse[ ph.cvfit$min ] + ph.cvfit$cve[ ph.cvfit$min ]
+idx.se <- min( which( ph.cvfit$cve < l.se ) ) - 1
+
+# select validation data
+d.ph10.val <- berne[berne$dataset == "validation" & !is.na(berne$ph.0.10), ]
+d.ph10.val <- d.ph10.val[complete.cases(d.ph10.val[13:ncol(d.ph10)]), ]
+
+# create model matrix for validation set
+newXX <- model.matrix( ~., d.ph10.val[, c(l.factors, l.numeric), F])[,-1]
+
+t.pred.val <-  predict(ph.cvfit, X = newXX, 
+                       type = "response",
+                       lambda =  ph.cvfit$lambda[idx.se])
+
+# get CV predictions, e.g. to compute R2
+ph.lasso.cv.pred <- ph.cvfit$Y[,idx.se]
+@
+
+<<lasso-plot-cv,echo=FALSE,fig.width=7,fig.height=4.5, fig.align='center', out.width='0.8\\textwidth',fig.cap = "Cross validation error plotted against the tuning parameter lambda. The dashed line indicates lambda at minimal error, the dotted darkgrey line is the optimal lambda with minimal error + 1 SE.">>=
+
+plot(ph.cvfit)
+abline( h = l.se, col = "grey", lty = "dotted")
+abline( v = log( ph.cvfit$lambda[ idx.se ]), col = "grey30", lty = "dotted")
+@
+
+
+I am not aware of a lasso implementation for multinomial responses 
+that can handle groups of factors. Therefore, we use "standard" lasso from R package \texttt{glmnet} (the option \texttt{type.multinomial = "grouped"} does only ensure all coefficents of the multinomial model for the same covariate are treated as groups). 
+
+<<lasso-multinomial-response,cache = TRUE>>=
+
+# create model matrix for drainage classes
+# use a subset of covariates only, because model optimization for 
+# multinomial takes long otherwise
+set.seed(42)
+XX <- model.matrix(~.,d.drain[, l.covar[sample(1:length(l.covar), 20)]])[,-1]
+
+drain.cvfit <- cv.glmnet( XX, d.drain$dclass, nfold = 10,  
+                          keep = T, # access CV results
+                          family = "multinomial", 
+                          type.multinomial = "grouped")
+@
+
+
+\paragraph{Please continue:}
+
+\begin{itemize}
+\item Select the lasso for a binary response (e.g. presence/absence of waterlogging \texttt{waterlog.100}). Use \texttt{family = "binomial"} in \texttt{cv.grpreg} and make sure your response is coded as 0/1. 
+\item For the multinomial lasso fit of drainage class: compute predictions for the validation set (\texttt{predict} with \texttt{s="lambda.1se"} or \texttt{s="lambda.min"}). Then, evaluate prediction accuracy by e.g. using Pierce Skill Score, see function \texttt{verify} or \texttt{multi.cont} in R package \texttt{verification}. 
+%  t.pred.val <- predict(drain.cvfit, newx = newXX, s="lambda.min", type = "class")
+\end{itemize}
+
+
+\section{Gradient boosting}
+
+\subsection{Boosting with linear baselearners}
+
+Boosting algorithm can be used with any kind of base procedures / baselearners. Many packages (e.g. \texttt{gbm}, \texttt{xgboost}) use trees. Here we try linear and splines baselearners. 
+
+
+For details on \texttt{mboost} see the hands-on tutorial in the vignette to the package:
+\url{https://cran.r-project.org/web/packages/mboost/vignettes/mboost_tutorial.pdf}
+
+Select a boosting model with linear baselearners (this results in shrunken coefficients, similar to the lasso, see Hastie et al. 2009): 
+
+<<glmboost,cache=TRUE>>=
+# Fit model
+ph.glmboost <- glmboost(ph.0.10 ~., data = d.ph10[ c("ph.0.10", l.covar)],
+                        control = boost_control(mstop = 200),
+                        center = TRUE)
+
+# Find tuning parameter: mstop = number of boosting itertations
+set.seed(42)
+ph.glmboost.cv <- cvrisk(ph.glmboost, 
+                         folds = mboost::cv(model.weights(ph.glmboost), 
+                                            type = "kfold"))
+
+# print optimal mstop
+mstop(ph.glmboost.cv)
+
+## print model with fitted coefficents 
+# ph.glmboost[ mstop(ph.glmboost.cv)]
+@
+
+
+<<glmboost-plot,fig.width=7,fig.height=5, fig.align='center', out.width='0.8\\textwidth',fig.cap = "Path of cross validation error along the boosting iterations.", echo = FALSE>>=
+plot(ph.glmboost.cv)
+@
+
+
+\subsection{Boosting with splines baselearners}
+
+To model non-linear relationships we use splines baselearners. Spatial autocorrelation can be captured by adding a smooth spatial surface. This type of model needs a bit more setup. Each covariate type has its own specification. All baselearners should have the same degrees of freedom, otherwise biased model selection might be the result.  
+
+<<gamboost,cache=TRUE,message=FALSE>>=
+
+# quick set up formula
+
+# Response
+f.resp <- "ph.0.10 ~ "
+
+# Intercept, add to dataframe 
+f.int <- "bols(int, intercept = F, df = 1)"
+d.ph10$int <- rep(1, nrow(d.ph10))
+
+# Smooth spatial surface (needs > 4 degrees of freedom)
+f.spat <- "bspatial(x, y, df = 5, knots = 12)"
+
+# Linear baselearners for factors, maybe use df = 5
+f.fact <- paste( 
+  paste( "bols(", l.factors, ", intercept = F)" ), 
+  collapse = "+" 
+)
+
+# Splines baselearners for continuous covariates
+f.num <- paste( 
+  paste( "bbs(", l.numeric, ", center = T, df = 5)" ),
+  collapse = "+"
+)
+
+# create complete formula 
+ph.form <- as.formula( paste( f.resp, 
+                              paste( c(f.int, f.num, f.spat, f.fact),
+                                     collapse = "+")) ) 
+# fit the boosting model
+ph.gamboost  <- gamboost(ph.form, data = d.ph10,
+                         control = boost_control(mstop = 200))
+
+# Find tuning parameter
+ph.gamboost.cv <- cvrisk(ph.gamboost, 
+                         folds = mboost::cv(model.weights(ph.gamboost), 
+                                            type = "kfold"))
+@
+
+Analyse boosting model:
+
+<<gamboost-results>>=
+# print optimal mstop
+mstop(ph.gamboost.cv)
+
+## print model info 
+ph.gamboost[ mstop(ph.glmboost.cv)]
+## print number of chosen baselearners 
+length( t.sel <-  summary( ph.gamboost[ mstop(ph.glmboost.cv)] )$selprob ) 
+
+# Most often selected were: 
+summary( ph.gamboost[ mstop(ph.glmboost.cv)] )$selprob[1:5]  
+@
+
+<<gamboost-partial-plots,echo=FALSE,fig.width=7,fig.height=6, fig.align='center', out.width='0.8\\textwidth',fig.cap = "Residual plots of the 4 covariates with highest selection frequency.">>=
+par(mfrow=c(2,2) )
+plot(ph.gamboost[ mstop(ph.glmboost.cv)], which = names(t.sel[1:4]) )
+@
+
+<<gamboost-partial-plots-spatial,echo=FALSE,fig.width=7,fig.height=5, fig.align='center', out.width='0.8\\textwidth',fig.cap = "Modelled smooth spatial surface based on the coordinates.">>=
+par(mfrow=c(1,1) )
+plot(ph.gamboost[ mstop(ph.glmboost.cv)], which = grep("bspat", names(t.sel), value = T) )
+@
+
+\clearpage
+\subsection{Geoadditive model selection using boosting}
+
+Gradient boosting with splines results still in quite large covariate sets. Moreover, factors often do not have the same degrees of freedom as the other baseleaners (here set to \texttt{df = 5}). Selection of factors might be biased. 
+
+GeoGAM ueses boosting to select covariates and their structure to finally fit a (geo)additive model (\texttt{gam} object from R package \texttt{mgcv}). "geo" refers to the smooth spatial surface that is possibly selected if spatial correlation is relevant (judged by decrease in cross validation error). Factors are added as offset for boosting and -- if relevant -- added to the final model. 
+
+\bigskip
+
+\textsl{NOTE: geoGAM is alpha / experimental version. Bug reports to: madlene.nussbaum@bfh.ch.}
+
+<<geoGAM,cache=TRUE,message=FALSE>>=
+ph.geogam <- geoGAM(response = "ph.0.10",
+                    covariates = l.covar,
+                    coords = c("x", "y"),
+                    data = d.ph10, seed = 1)
+@
+
+Formula of chosen model:
+<<geoGAM-summary>>=
+
+ph.geogam$gam.final$formula
+
+##  plot summary and model selection information
+# summary(ph.geogam)
+# summary(ph.geogam, what = "path")
+@
+
+<<geoGAM-map,echo = FALSE,fig.width=5,fig.height=5, fig.pos='!h',fig.align='center', out.width='0.5\\textwidth',fig.cap="GeogAM predictions for topsoil pH for the berne.grid section of the study area.">>=
+
+# Create GRID output with predictions
+sp.grid <- berne.grid[, c("x", "y")]
+#add timeset - soil legacy data correction
+# create prediction for newest set
+berne.grid$timeset <- factor(rep("d1979_2010"), 
+                             levels = levels(berne$timeset))
+sp.grid$pred.ph.0.10 <- predict(ph.geogam, newdata = berne.grid)
+# transform to sp object
+coordinates(sp.grid) <- ~ x + y
+# assign Swiss CH1903 / LV03 projection
+proj4string(sp.grid) <- CRS("+init=epsg:21781")
+# transform to grid
+gridded(sp.grid) <- TRUE
+plot(sp.grid)
+@
+
+
+\section{Model averaging}
+
+So far we calibrated several models to predict topsoil pH. With model averaging we can combine these predictions computing a simple \texttt{mean}. Besides simple averaging, we could use weights like $\frac{1}{MSE}$ (make sure they sum up to 1). 
+
+Compute validation statistics (e.g. root mean squared error, R$^2$) on the validation set for the predictions of each model and the (weighted) averaged predictions. Is the prediction accuracy improved?
+
+You could now add models computed from random forest, support vector machines or gradient boosted trees. Does this improve model accuracy?
+
+\bigskip
+
+Note: Be aware not to select the final model based on the validation data. If you start tuning your predictions on your validation data, you loose the independent estimate of prediction accuracy... better choose your method for the final predictions based on cross validation (e.g. on the same sets).  
+
+
+
+
+\bigskip 
+\section*{R session information}
+
+\small
+This document was generated with:
+<<session-info,results='asis'>>=
+toLatex(sessionInfo(), locale = FALSE)
+@
+\normalsize
+
+<<export-r-code,echo=FALSE>>=
+#purl("GEOSTAT-machine-learning-training-1.Rnw")
+@
+
+
+\end{document}

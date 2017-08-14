@@ -221,5 +221,5 @@ abline(v = c(0.05, 0.95), lty = "dotted", col = "grey20")
 toLatex(sessionInfo(), locale = FALSE)
 
 ## ----export-r-code,echo=FALSE--------------------------------------------
-purl("GEOSTAT-machine-learning-training-2.Rnw")
+#purl("GEOSTAT-machine-learning-training-2.Rnw")
 

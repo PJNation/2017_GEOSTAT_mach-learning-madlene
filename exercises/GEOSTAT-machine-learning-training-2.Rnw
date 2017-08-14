@@ -68,7 +68,7 @@ breaklinks=true, bookmarksnumbered=true
 \vspace{7cm}
 {\LARGE \textbf{GEOSTAT }}
 
-{\Large \textbf{Mastering Machine Learning for Spatial Prediciton 2} }
+{\Large \textbf{Mastering Machine Learning for Spatial Prediction 2} }
 
 \vspace{0.3cm}
 
@@ -392,10 +392,6 @@ abline(v = c(0.05, 0.95), lty = "dotted", col = "grey20")
 \item Create maps of the prediction intervals for the \texttt{berne.grid} data. Is there much spatial structure in the uncertainty? Do quantile regression forest and bootstrapped intervals differ? If yes, why (which assumption)?
 \end{itemize}
 
-
-
-\bibliographystyle{copernicus}
-\bibliography{apbiblio}
 
 
 \bigskip 
