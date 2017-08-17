@@ -77,6 +77,16 @@ t.pred.val <-  predict(ph.cvfit, X = newXX,
 # get CV predictions, e.g. to compute R2
 ph.lasso.cv.pred <- ph.cvfit$Y[,idx.se]
 
+## ----lasso-get-model-----------------------------------------------------
+
+## get all coefficients
+
+# ph.cvfit$fit$beta[, idx.se ]
+
+# only get the non-zero ones:
+t.coef <- ph.cvfit$fit$beta[, idx.se ]
+t.coef[ t.coef > 0 ]
+
 ## ----lasso-plot-cv,echo=FALSE,fig.width=7,fig.height=4.5, fig.align='center', out.width='0.8\\textwidth',fig.cap = "Cross validation error plotted against the tuning parameter lambda. The dashed line indicates lambda at minimal error, the dotted darkgrey line is the optimal lambda with minimal error + 1 SE."----
 
 plot(ph.cvfit)
@@ -95,6 +105,18 @@ drain.cvfit <- cv.glmnet( XX, d.drain$dclass, nfold = 10,
                           keep = T, # access CV results
                           family = "multinomial", 
                           type.multinomial = "grouped")
+
+## ----lasso-multinomial-response-coeffs,cache=TRUE------------------------
+
+drain.fit <- glmnet( XX, d.drain$dclass,
+                     family = "multinomial", 
+                     type.multinomial = "grouped",
+                     lambda = drain.cvfit$lambda.min)
+
+# The coeffs are here:
+# drain.fit$beta$well
+# drain.fit$beta$moderate
+# drain.fit$beta$poor
 
 ## ----glmboost,cache=TRUE-------------------------------------------------
 # Fit model
